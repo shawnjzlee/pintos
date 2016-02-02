@@ -92,6 +92,16 @@ struct thread
 
     /* Shared between thread.c and synch.c. */
     struct list_elem elem;              /* List element. */
+    
+    /* Contributor-defined member definitions */
+    int64_t wake_time;                  /* Wake time to assist timer_sleep () */
+    struct list_elem sleepelem;         /* List element for sleeping threads. */
+    
+    int old_priority;                   /* Old priority set by
+                                           thread_set_priority () */
+                                           
+    bool donation;                      /* Flag to check if thread has priority
+                                           donation (UNUSED)*/
 
 #ifdef USERPROG
     /* Owned by userprog/process.c. */
@@ -126,12 +136,26 @@ const char *thread_name (void);
 void thread_exit (void) NO_RETURN;
 void thread_yield (void);
 
+/* Contributor-added functions (thread-related) */
+
 /* Performs some operation on thread t, given auxiliary data AUX. */
 typedef void thread_action_func (struct thread *t, void *aux);
 void thread_foreach (thread_action_func *, void *);
 
+/* Updated below */
+// int thread_get_priority (void);
+// void thread_set_priority (int);
+
+/* Contributor-added functions (priority-related) */
 int thread_get_priority (void);
+int thread_get_priority_helper (struct thread *);
+
 void thread_set_priority (int);
+void thread_set_priority_helper (struct thread *);
+
+bool thread_compare_priority (const struct list_elem *,
+                              const struct list_elem *,
+                              void *aux);
 
 int thread_get_nice (void);
 void thread_set_nice (int);
