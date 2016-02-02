@@ -30,6 +30,10 @@ static void busy_wait (int64_t loops);
 static void real_time_sleep (int64_t num, int32_t denom);
 static void real_time_delay (int64_t num, int32_t denom);
 
+/* Contributor-defined variables */
+/* List that holds sleeping threads */
+static struct list sleep_list;
+
 /* Sets up the timer to interrupt TIMER_FREQ times per second,
    and registers the corresponding interrupt. */
 void
@@ -37,6 +41,11 @@ timer_init (void)
 {
   pit_configure_channel (0, 2, TIMER_FREQ);
   intr_register_ext (0x20, timer_interrupt, "8254 Timer");
+  
+  /* Initialize the list that holds sleeping threads along with timer.
+   timer_sleep() will block the thread and place it in sleep_list until
+   wake_time. */
+  list_init(&sleep_list);
 }
 
 /* Calibrates loops_per_tick, used to implement brief delays. */
@@ -92,8 +101,24 @@ timer_sleep (int64_t ticks)
   int64_t start = timer_ticks ();
 
   ASSERT (intr_get_level () == INTR_ON);
-  while (timer_elapsed (start) < ticks) 
-    thread_yield ();
+  // while (timer_elapsed (start) < ticks) 
+  //   thread_yield ();
+    
+  struct thread * t = thread_current ();  /* Gets the current thread */
+  t->wake_time = start + ticks;           /* Sets current thread's wake_time to
+                                             passed-in tick since start */
+
+  /* Local variable to hold old interrupt state and disable interrupts to
+     prevent race conditions 
+     Note: Calling intr_level and directly appending value here to see if 
+     timings change */
+  enum intr_level old_level = intr_disable ();
+  
+  /* Push_back the element into the sleep_list */
+  list_push_back (&sleep_list, &t->sleepelem);
+  
+  thread_block ();                        /* Block the current thread */
+  intr_set_level(old_level);              /* Sets the previous intr state */
 }
 
 /* Sleeps for approximately MS milliseconds.  Interrupts must be
@@ -172,6 +197,25 @@ timer_interrupt (struct intr_frame *args UNUSED)
 {
   ticks++;
   thread_tick ();
+  
+  /* Similar to line XX in /threads/thread.c. Checks the sleep_list if
+     wake_time ticks have passed. This section has interrupts on, unless noted
+     in the future otherwise */
+  struct list_elem * e;
+  
+  // ASSERT (intr_get_level () == INTR_OFF);
+  
+  for (e = list_begin (&sleep_list); e != list_end (&sleep_list); 
+       e = list_next (e))
+    {
+      struct thread * t = list_entry (e, struct thread, sleepelem);
+      /* function call */
+      if (t->wake_time <= ticks)
+      {
+        list_remove (&t->sleepelem);
+        thread_unblock (t);
+      }
+    }
 }
 
 /* Returns true if LOOPS iterations waits for more than one timer
