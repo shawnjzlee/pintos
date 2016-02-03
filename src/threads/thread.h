@@ -149,17 +149,25 @@ void thread_foreach (thread_action_func *, void *);
 // void thread_set_priority (int);
 
 /* Contributor-added functions (priority-related) */
+/* Definition at line 354 of file thread.c */
+void thread_set_priority (int);
+
+/* Definition at line 370 of file thread.c */
+struct thread * thread_get_max_priority (void);
+
+/* Definition at line 377 of file thread.c */
 int thread_get_priority (void);
+
+/* Definition at line 385 of file thread.c */
 int thread_get_priority_helper (struct thread *);
 
-void thread_set_priority (int);
-void thread_set_priority_helper (struct thread *);
+/* Definition at line XX of file thread.c */
+// void thread_set_priority_helper (struct thread *);
 
+/* Definition at line 427 of file thread.c */
 bool thread_compare_priority (const struct list_elem *,
                               const struct list_elem *,
                               void *aux);
-                              
-struct thread * thread_get_max_priority (void);
 
 int thread_get_nice (void);
 void thread_set_nice (int);

@@ -92,6 +92,8 @@ sema_down (struct semaphore *sema)
   old_level = intr_disable ();
   while (sema->value == 0) 
     {
+      /* Push the thread onto the waiting list 
+         Block the thread so that it is not allowed to run */
       list_push_back (&sema->waiters, &thread_current ()->elem);
       thread_block ();
     }
@@ -141,6 +143,9 @@ sema_up (struct semaphore *sema)
   {
     // thread_unblock (list_entry (list_pop_front (&sema->waiters),
     //                             struct thread, elem));
+    
+    /* Finds the thread with highest priority and removes it from the list.
+       Since it is the highest priority thread, unblock it */
     struct thread * temp = list_entry (SYNCH_LIST_MAX, struct thread, elem);
     list_remove (SYNCH_LIST_MAX);
     thread_unblock (temp);
@@ -149,6 +154,7 @@ sema_up (struct semaphore *sema)
   sema->value++;
   intr_set_level (old_level);
   
+  /* Yields the current thread if the highest priority thread is larger */ 
   struct thread * temp = thread_get_max_priority ();
   if (temp->priority > thread_current ()->priority)
   {
