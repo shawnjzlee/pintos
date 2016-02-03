@@ -15,6 +15,11 @@
 #include "userprog/process.h"
 #endif
 
+/* Returns the element in the LIST with the largest value acccording to LESS
+   given auxiliary data AUX.
+   Reducce code clutter */
+#define LIST_MAX list_max (&ready_list, thread_compare_priority, 0)
+
 /* Random value for struct thread's `magic' member.
    Used to detect stack overflow.  See the big comment at the top
    of thread.h for details. */
@@ -208,6 +213,13 @@ thread_create (const char *name, int priority,
 
   /* Add to run queue. */
   thread_unblock (t);
+  
+  /* Yields the current thread if the highest priority thread is larger */
+  struct thread * temp = list_entry (LIST_MAX, struct thread, elem);
+  if (temp->priority > thread_current ()->priority)
+  {
+    thread_yield;
+  }
 
   return tid;
 }
@@ -339,18 +351,89 @@ thread_foreach (thread_action_func *func, void *aux)
     }
 }
 
-/* Sets the current thread's priority to NEW_PRIORITY. */
+/* Sets the current thread's priority to NEW_PRIORITY. 
+   Backs up the current thread's old priority to OLD_PRIORITY. 
+   Yields the current thread if the highest priority thread is larger */
 void
 thread_set_priority (int new_priority) 
 {
+  thread_current ()->old_priority = new_priority;
   thread_current ()->priority = new_priority;
+  
+  struct thread * t = list_entry (LIST_MAX, struct thread, elem);
+  if (t-> priority > new_priority)
+  {
+    thread_yield ();
+  }
 }
 
 /* Returns the current thread's priority. */
 int
 thread_get_priority (void) 
 {
-  return thread_current ()->priority;
+  // return thread_current ()->priority;
+  return thread_get_priority_helper (thread_current ());
+}
+
+/* Gets the maximum priority of a passed-in thread.
+   Returns the priority immediately if the thread is empty.
+   Returns the maximum priority after traversing the list to find it. 
+   
+   Helper function to find the priority of the current thread by passing the
+   the currently running thread (with sanity checks) if called by
+   thread_get_priority (). */
+int 
+thread_get_priority_helper (struct thread * t)
+{
+  if (list_empty (&t->priority_list))
+  {
+    return t->priority;
+  }
+  /* Similar to line 339 in /threads/thread.c. Traverses the priority_list
+     to find the max priority. This section has interrupts on, unless noted in
+     the future otherwise */
+  struct list_elem * e;
+  int max_priority = t->priority;
+  
+  // ASSERT (intr_get_level () == INTR_OFF);
+  
+  for (e = list_begin (&t->priority_list); e != list_end (&t->priority_list);
+       e = list_next (e))
+    {
+      struct lock *l = list_entry (e, struct lock, priorityelem);
+      struct list_elem * f;
+      
+      for (f = list_begin (&l->semaphore.waiters);
+           f != list_end (&l->semaphore.waiters);
+           f = list_next (f))
+        {
+          struct thread * temp = list_entry (f, struct thread, elem);
+          if (thread_get_priority_helper (temp) > max_priority)
+          {
+            max_priority = thread_get_priority_helper (temp);
+          }
+        }
+    }
+    return max_priority;
+}
+
+/* Compares the priority of two threads.
+   Returns true if second element is larger than the first.
+   Returns false if first element is larger than the second.
+   
+   The function calls thread_get_priority () of each list element to find the
+   maximum priority value of each element */
+
+bool 
+thread_compare_priority (const struct list_elem * e1,
+                         const struct list_elem * e2,
+                         void * aux UNUSED)
+{
+  struct thread * thread_t1 = list_entry (e1, struct thread, elem);
+  struct thread * thread_t2 = list_entry (e2, struct thread, elem);
+  
+  return thread_get_priority_helper (thread_t1) < 
+         thread_get_priority_helper (thread_t2);
 }
 
 /* Sets the current thread's nice value to NICE. */
@@ -470,6 +553,10 @@ init_thread (struct thread *t, const char *name, int priority)
   t->priority = priority;
   t->magic = THREAD_MAGIC;
   list_push_back (&all_list, &t->allelem);
+  
+  /* Contributor-defined variable inits */
+  t->old_priority = priority;
+  list_init (&t->priority_list);
 }
 
 /* Allocates a SIZE-byte frame at the top of thread T's stack and
@@ -496,7 +583,17 @@ next_thread_to_run (void)
   if (list_empty (&ready_list))
     return idle_thread;
   else
-    return list_entry (list_pop_front (&ready_list), struct thread, elem);
+  {
+    // return list_entry (list_pop_front (&ready_list), struct thread, elem);
+    
+    /* Macro LIST_MAX defined above on line 18.
+       Ensures that the next thread that runs is of highest priority. Invokes
+       the function thread_compare_priority () to find the highest priority
+       thread in the list */
+    struct thread * t = list_entry (LIST_MAX, struct thread, elem);
+    list_remove (LIST_MAX);
+    return t;
+  }
 }
 
 /* Completes a thread switch by activating the new thread's page

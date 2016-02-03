@@ -97,6 +97,8 @@ struct thread
     int64_t wake_time;                  /* Wake time to assist timer_sleep () */
     struct list_elem sleepelem;         /* List element for sleeping threads. */
     
+    struct list priority_list;          /* List that tracks locks held by their
+                                           respective threads */
     int old_priority;                   /* Old priority set by
                                            thread_set_priority () */
                                            
