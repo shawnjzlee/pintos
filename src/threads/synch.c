@@ -32,6 +32,30 @@
 #include "threads/interrupt.h"
 #include "threads/thread.h"
 
+/* Returns the element in the LIST with the largest value acccording to LESS
+   given auxiliary data AUX.
+   Reducce code clutter */
+#define SYNCH_LIST_MAX list_max (&sema->waiters, synch_compare_priority, 0)
+
+/* Compares the priority of two threads.
+   Returns true if second element is larger than the first.
+   Returns false if first element is larger than the second.
+   
+   The function calls thread_get_priority () of each list element to find the
+   maximum priority value of each element.
+   This function is used only within the scope of synch.c */
+static bool
+synch_compare_priority (const struct list_elem * e1,
+                        const struct list_elem * e2,
+                        void * aux UNUSED)
+  {
+    struct thread * thread_t1 = list_entry (e1, struct thread, elem);
+    struct thread * thread_t2 = list_entry (e2, struct thread, elem);
+    
+    return thread_get_priority_helper (thread_t1) <
+           thread_get_priority_helper (thread_t2);
+  }
+
 /* Initializes semaphore SEMA to VALUE.  A semaphore is a
    nonnegative integer along with two atomic operators for
    manipulating it:
@@ -113,11 +137,23 @@ sema_up (struct semaphore *sema)
   ASSERT (sema != NULL);
 
   old_level = intr_disable ();
-  if (!list_empty (&sema->waiters)) 
-    thread_unblock (list_entry (list_pop_front (&sema->waiters),
-                                struct thread, elem));
+  if (!list_empty (&sema->waiters))
+  {
+    // thread_unblock (list_entry (list_pop_front (&sema->waiters),
+    //                             struct thread, elem));
+    struct thread * temp = list_entry (SYNCH_LIST_MAX, struct thread, elem);
+    list_remove (SYNCH_LIST_MAX);
+    thread_unblock (temp);
+  }
+
   sema->value++;
   intr_set_level (old_level);
+  
+  struct thread * temp = thread_get_max_priority ();
+  if (temp->priority > thread_current ()->priority)
+  {
+    thread_yield ();
+  }
 }
 
 static void sema_test_helper (void *sema_);
@@ -198,6 +234,9 @@ lock_acquire (struct lock *lock)
 
   sema_down (&lock->semaphore);
   lock->holder = thread_current ();
+  
+  /* Push the thread the newly added lock to the priority_list */
+  list_push_back (&thread_current ()->priority_list, &lock->priorityelem);
 }
 
 /* Tries to acquires LOCK and returns true if successful or false
@@ -230,9 +269,16 @@ lock_release (struct lock *lock)
 {
   ASSERT (lock != NULL);
   ASSERT (lock_held_by_current_thread (lock));
+  
+  /* Remove the lock from the list */
+  list_remove (&lock->priorityelem);
 
   lock->holder = NULL;
   sema_up (&lock->semaphore);
+  
+  /* Return the current thread's priority to its old priority
+     (and new priority from thread_set_priority) */
+  thread_current ()->priority = thread_current ()->old_priority;
 }
 
 /* Returns true if the current thread holds LOCK, false

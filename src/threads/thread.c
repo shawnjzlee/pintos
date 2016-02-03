@@ -18,7 +18,7 @@
 /* Returns the element in the LIST with the largest value acccording to LESS
    given auxiliary data AUX.
    Reducce code clutter */
-#define LIST_MAX list_max (&ready_list, thread_compare_priority, 0)
+#define THREAD_LIST_MAX list_max (&ready_list, thread_compare_priority, 0)
 
 /* Random value for struct thread's `magic' member.
    Used to detect stack overflow.  See the big comment at the top
@@ -215,10 +215,10 @@ thread_create (const char *name, int priority,
   thread_unblock (t);
   
   /* Yields the current thread if the highest priority thread is larger */
-  struct thread * temp = list_entry (LIST_MAX, struct thread, elem);
+  struct thread * temp = list_entry (THREAD_LIST_MAX, struct thread, elem);
   if (temp->priority > thread_current ()->priority)
   {
-    thread_yield;
+    thread_yield ();
   }
 
   return tid;
@@ -360,11 +360,18 @@ thread_set_priority (int new_priority)
   thread_current ()->old_priority = new_priority;
   thread_current ()->priority = new_priority;
   
-  struct thread * t = list_entry (LIST_MAX, struct thread, elem);
+  struct thread * t = list_entry (THREAD_LIST_MAX, struct thread, elem);
   if (t-> priority > new_priority)
   {
     thread_yield ();
   }
+}
+
+/* Returns the highest priority thread in the list */
+struct thread *
+thread_get_max_priority (void)
+{
+  return list_entry (THREAD_LIST_MAX, struct thread, elem);
 }
 
 /* Returns the current thread's priority. */
@@ -586,12 +593,12 @@ next_thread_to_run (void)
   {
     // return list_entry (list_pop_front (&ready_list), struct thread, elem);
     
-    /* Macro LIST_MAX defined above on line 18.
+    /* Macro THREAD_LIST_MAX defined above on line 18.
        Ensures that the next thread that runs is of highest priority. Invokes
        the function thread_compare_priority () to find the highest priority
        thread in the list */
-    struct thread * t = list_entry (LIST_MAX, struct thread, elem);
-    list_remove (LIST_MAX);
+    struct thread * t = list_entry (THREAD_LIST_MAX, struct thread, elem);
+    list_remove (THREAD_LIST_MAX);
     return t;
   }
 }
