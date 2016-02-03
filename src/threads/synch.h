@@ -18,6 +18,10 @@ void sema_up (struct semaphore *);
 void sema_self_test (void);
 
 /* Contributor-added functions (sema-related) */
+/* Definition on line XX of file synch.c */
+bool sema_compare_priority (const struct list_elem *,
+                            const struct list_elem *,
+                            void * aux);
 
 /* Lock. */
 struct lock 

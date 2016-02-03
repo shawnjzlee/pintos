@@ -368,9 +368,12 @@ cond_signal (struct condition *cond, struct lock *lock UNUSED)
   ASSERT (!intr_context ());
   ASSERT (lock_held_by_current_thread (lock));
 
-  if (!list_empty (&cond->waiters)) 
+  if (!list_empty (&cond->waiters))
+  {
+    list_sort (&cond->waiters, (list_less_func *) &sema_compare_priority, 0);
     sema_up (&list_entry (list_pop_front (&cond->waiters),
                           struct semaphore_elem, elem)->semaphore);
+  }
 }
 
 /* Wakes up all threads, if any, waiting on COND (protected by
@@ -387,4 +390,41 @@ cond_broadcast (struct condition *cond, struct lock *lock)
 
   while (!list_empty (&cond->waiters))
     cond_signal (cond, lock);
+}
+
+/* Compares the priority of two threads with locks.
+   Returns false if second element is larger than the first.
+   Returns true if first element is larger than the second.
+   
+   The function calls thread_get_priority () of each list element to find the
+   maximum priority value of each element 
+   
+   Note: Why does this function need to be after cond_signal()? Unable to place
+   before cond_signal without getting a pointer dereferenced compilation error. 
+*/
+bool
+sema_compare_priority(const struct list_elem *e1, 
+                      const struct list_elem *e2,
+                      void *aux UNUSED)
+{
+  struct semaphore_elem *sema_s1 = list_entry (e1, struct semaphore_elem, elem);
+  struct semaphore_elem *sema_s2 = list_entry (e2, struct semaphore_elem, elem);
+  
+  struct list *list_l1 = &sema_s1->semaphore.waiters;
+  struct list *list_l2 = &sema_s2->semaphore.waiters;
+  
+  if (list_empty (list_l1))
+    return false;
+  if (list_empty (list_l2))
+    return true;
+      
+  list_sort(list_l1, &thread_compare_priority, 0);
+  list_sort(list_l2, &thread_compare_priority, 0);
+  
+  struct thread *t1 = list_entry (list_front (list_l1), struct thread, elem);
+  struct thread *t2 = list_entry (list_front (list_l2), struct thread, elem);
+  
+  if (thread_get_priority_helper (t1) > thread_get_priority_helper (t2))
+    return true;
+  return false;
 }
