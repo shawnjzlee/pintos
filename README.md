@@ -7,9 +7,9 @@ This is a project for **CS153: Operating Systems** at [UC Riverside](http://ucr.
 
 Over the course of ten weeks, we will be implementing these into PintOS:
 
-1. threads (**Jan 29, 2016**)
+1. threads (**~~Jan 29, 2016~~ Feb 02, 2016**)
 
-2. user programs (*TBA*)
+2. user programs (**Feb 19, 2016**)
 
 3. virtual memory (*TBA*)
 
