@@ -1,0 +1,233 @@
+		     +--------------------------+
+       	 |					CS 153					|
+		     | PROJECT 2: USER PROGRAMS	|
+		     | 	   DESIGN DOCUMENT     	|
+		     +--------------------------+
+
+---- GROUP ----
+
+>> Fill in the names and email addresses of your group members.
+
+Shawn Lee <slee208@ucr.edu> <861090401>
+Harrison Ray <hray001@ucr.edu> <861123139>
+
+---- PRELIMINARIES ----
+
+>> If you have any preliminary comments on your submission, notes for the
+>> TAs, or extra credit, please give them here.
+
+>> Please cite any offline or online sources you consulted while
+>> preparing your submission, other than the Pintos documentation, course
+>> text, lecture notes, and course staff.
+
+			   ARGUMENT PASSING
+			   ================
+
+---- DATA STRUCTURES ----
+
+>> A1: Copy here the declaration of each new or changed `struct' or
+>> `struct' member, global or static variable, `typedef', or
+>> enumeration.  Identify the purpose of each in 25 words or less.
+
+No struct was added for argument passing.
+
+---- ALGORITHMS ----
+
+>> A2: Briefly describe how you implemented argument parsing.  How do
+>> you arrange for the elements of argv[] to be in the right order?
+>> How do you avoid overflowing the stack page?
+
+We can tokenize argument parsing. First, we can traverse the elements from back
+to front and push the argument to the top of a stack. When we want to get 
+arguments, we can pop off the stack to ensure the right order of arguments and
+never need to change the order of arguments that were tokenized and pushed on.
+
+To avoid overflow, we can check the of arguments passed in (similar to checking
+the buffer size). If we overflow, we pass an error and exit.
+
+---- RATIONALE ----
+
+>> A3: Why does Pintos implement strtok_r() but not strtok()?
+
+strtok_r() is threadsafe. Since it is reentrant version of strtok(), it avoids
+the issue where another thread gains control of strtok(), resulting in a change
+in the savepointer. strtok_r() has a third argument to search tokens in a
+different index of the string.
+
+>> A4: In Pintos, the kernel separates commands into a executable name
+>> and arguments.  In Unix-like systems, the shell does this
+>> separation.  Identify at least two advantages of the Unix approach.
+
+One advantage is reducing the amount of time within in kernel. Another would be
+argument checking before passing, avoiding errors.
+
+			     SYSTEM CALLS
+			     ============
+
+---- DATA STRUCTURES ----
+
+>> B1: Copy here the declaration of each new or changed `struct' or
+>> `struct' member, global or static variable, `typedef', or
+>> enumeration.  Identify the purpose of each in 25 words or less.
+
+struct child_thread {
+	tid_t pid;	// Child pid
+	int child_status; // Waiting, exited, etc. 
+	struct list_elem elem;
+}
+
+struct thread {
+	tid_t pid; // Parent pid
+	struct list fd_list; // List containing all of thread's file descriptors
+	struct list children_list; // List referencing all children of parent thread
+	struct file *thread_file; // File being executed by the current thread 
+}
+
+struct file_descriptor {
+	int fid; // File descriptor id
+	struct file *file; // File opened
+	struct list_elem elem;
+}
+
+>> B2: Describe how file descriptors are associated with open files.
+>> Are file descriptors unique within the entire OS or just within a
+>> single process?
+
+File descriptors are unique within each process, not within the entire OS. 
+We use a list of file descriptors that are removed upon the termination
+of the open file.
+
+---- ALGORITHMS ----
+
+>> B3: Describe your code for reading and writing user data from the
+>> kernel.
+
+We ensure that the file is not locked by another process and that the pointer
+passed in is valid before attempting a read. For a write we ensure that the 
+size passed in does not go over the maximum page size, check that there is no
+lock, then write the buffer to the file up until eof or end of buffer.
+
+>> B4: Suppose a system call causes a full page (4,096 bytes) of data
+>> to be copied from user space into the kernel.  What is the least
+>> and the greatest possible number of inspections of the page table
+>> (e.g. calls to pagedir_get_page()) that might result?  What about
+>> for a system call that only copies 2 bytes of data?  Is there room
+>> for improvement in these numbers, and how much?
+
+In both cases the least possible number of inspections is 1 where we inspect 
+front of the page. The greatest possible number of inspections for a full page
+could be up to a check per byte, causing an entire 4,096 checks. Likewise the 
+greatest number of inspections for a call that only copies 2 bytes could only
+have 2 inspections.
+
+>> B5: Briefly describe your implementation of the "wait" system call
+>> and how it interacts with process termination.
+
+We ensure that the pid of the child is a direct child of the process calling
+wait(), and that at the time of termination of the child, we return the exits
+status to the parent calling wait(). To begin with until we implement a lock
+or sema related to this waiting will just be a busy_wait function.
+
+>> B6: Any access to user program memory at a user-specified address
+>> can fail due to a bad pointer value.  Such accesses must cause the
+>> process to be terminated.  System calls are fraught with such
+>> accesses, e.g. a "write" system call requires reading the system
+>> call number from the user stack, then each of the call's three
+>> arguments, then an arbitrary amount of user memory, and any of
+>> these can fail at any point.  This poses a design and
+>> error-handling problem: how do you best avoid obscuring the primary
+>> function of code in a morass of error-handling?  Furthermore, when
+>> an error is detected, how do you ensure that all temporarily
+>> allocated resources (locks, buffers, etc.) are freed?  In a few
+>> paragraphs, describe the strategy or strategies you adopted for
+>> managing these issues.  Give an example.
+
+Attempting to prevent these accesses is the first step. By sectioning the code
+in memory access around errors specifically targeted by bad pointer values we
+can avoid obscuring the rest of the code. If a bad pointer value is still 
+accessed regardless, then we chose to handle it within page_fault().
+
+An example case would be when attempting a write syscall. We first need to 
+check that the syscall has a valid pointer value, then we check the arguments
+passed in before we check the syscall itself. Once we have validated the 
+calls arguments and pointer value we can attempt the write.
+
+---- SYNCHRONIZATION ----
+
+>> B7: The "exec" system call returns -1 if loading the new executable
+>> fails, so it cannot return before the new executable has completed
+>> loading.  How does your code ensure this?  How is the load
+>> success/failure status passed back to the thread that calls "exec"?
+
+We can add member variable(s) to the thread struct to ensure that the "exec"
+system call returns -1 if loading the new executable fails. A boolean value can
+be used to check if loading the new exec succeeds or fails. We can use
+semaphores to pass back the load success/failure status back to the thread that
+calls "exec". 
+
+>> B8: Consider parent process P with child process C.  How do you
+>> ensure proper synchronization and avoid race conditions when P
+>> calls wait(C) before C exits?  After C exits?  How do you ensure
+>> that all resources are freed in each case?  How about when P
+>> terminates without waiting, before C exits?  After C exits?  Are
+>> there any special cases?
+
+We can add variables and lock to ensure proper synchronization and avoid race
+conditions when P calls wait(C) before C exits. The variables and lock can 
+flag if a child is dead or alive.
+
+If P terminates without waiting before C exits, then C's parent pointer is NULL
+and P's memory is freed. If P terminates after C exits, behaviors are normal and
+P's data is freed.
+
+All memory is freed after process_exit().
+
+---- RATIONALE ----
+
+>> B9: Why did you choose to implement access to user memory from the
+>> kernel in the way that you did?
+
+We chose to follow the first option of verifying the user-provided pointer
+then dereferencing it. The option was chosen because it was said to be easier 
+as well as the fact that looking at avoiding leaks with the second option 
+seemed extremely complicated.
+
+>> B10: What advantages or disadvantages can you see to your design
+>> for file descriptors?
+
+Advantage:
+By simplifying the file descriptors to be nothing more than objects in a list
+any checks for the descriptors is painless.
+
+Disadvantage:
+However this presents the opportunity for a file with a large number of file
+descriptors to slow down the check without creating a more extensive system.
+
+>> B11: The default tid_t to pid_t mapping is the identity mapping.
+>> If you changed it, what advantages are there to your approach?
+
+We did not change the identity mapping. 
+
+			   SURVEY QUESTIONS
+			   ================
+
+Answering these questions is optional, but it will help us improve the
+course in future quarters.  Feel free to tell us anything you
+want--these questions are just to spur your thoughts.  You may also
+choose to respond anonymously in the course evaluations at the end of
+the quarter.
+
+>> In your opinion, was this assignment, or any one of the three problems
+>> in it, too easy or too hard?  Did it take too long or too little time?
+
+>> Did you find that working on a particular part of the assignment gave
+>> you greater insight into some aspect of OS design?
+
+>> Is there some particular fact or hint we should give students in
+>> future quarters to help them solve the problems?  Conversely, did you
+>> find any of our guidance to be misleading?
+
+>> Do you have any suggestions for the TAs to more effectively assist
+>> students, either for future quarters or the remaining projects?
+
+>> Any other comments?
