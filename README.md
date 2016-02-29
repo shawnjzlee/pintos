@@ -9,9 +9,9 @@ Over the course of ten weeks, we will be implementing these into PintOS:
 
 1. threads (**~~Jan 29, 2016~~ Feb 02, 2016**)
 
-2. user programs (**~~Feb 19, 2016~~ Feb 24, 2016**)
+2. user programs (**~~Feb 19, 2016~~ Mar 04, 2016**)
 
-3. virtual memory (*TBA*)
+3. virtual memory (**~~ Unassigned / Extra Credit ~~**)
 
 Installation Guide / How to Use
 -------------------------------
