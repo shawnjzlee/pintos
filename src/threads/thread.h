@@ -4,7 +4,7 @@
 #include <debug.h>
 #include <list.h>
 #include <stdint.h>
-
+#include "threads/synch.h"
 /* States in a thread's life cycle. */
 enum thread_status
   {
@@ -80,6 +80,23 @@ typedef int tid_t;
    only because they are mutually exclusive: only a thread in the
    ready state is on the run queue, whereas only a thread in the
    blocked state is on a semaphore wait list. */
+   
+/* Contributor-defined struct */
+struct file_elem
+{
+    struct list_elem elem;				/* One item in the list / stack */
+    struct file * file_ptr;				/* File name as char array */
+	int fd;                          	/* Thread identifier. */
+};
+struct child_elem
+{
+    tid_t tid;                          /* TID of the child process */
+    bool status[4];                     /* Status of the process */
+    int rc;                             /* Return code after process ends */
+    struct thread * parent;             /* Parent thread of this child */
+    struct list_elem elem;              /* One item in the list / stack */
+};
+
 struct thread
   {
     /* Owned by thread.c. */
@@ -91,8 +108,26 @@ struct thread
     struct list_elem allelem;           /* List element for all threads list. */
 
     /* Shared between thread.c and synch.c. */
-    struct list_elem elem;              /* List element. */
-
+	struct list_elem elem;
+	
+	/* Contributor-defined member variables */
+	struct thread * parent;
+	struct child_elem * childelem;      /* Child element for the child thread */
+	
+	struct list child_list;				/* List of child threads */
+	struct list file_list;				/* List of files */
+    
+    struct semaphore t_sema;            /* Thread sema to avoid busy wait */
+    struct semaphore w_sema;            /* Wait sema to avoid busy wait */
+		
+    bool exit, is_waiting;              /* Flag to check if the parent thread 
+                                           has exited or in the wait state */
+    struct file * cur_file;             /* File name that is stored into the
+                                           thread */
+    int num_files;                      /* Number of files passed into the
+                                           thread */
+    int fd;                             /* File descriptor value */
+    //struct list_elem ch_elem;
 #ifdef USERPROG
     /* Owned by userprog/process.c. */
     uint32_t *pagedir;                  /* Page directory. */
@@ -137,5 +172,13 @@ int thread_get_nice (void);
 void thread_set_nice (int);
 int thread_get_recent_cpu (void);
 int thread_get_load_avg (void);
+
+/* Contributor-defined functions (thread related) */
+void init_child(struct child_elem * , struct thread * );
+struct child_elem* child_get_element(struct list * , tid_t);
+
+/* Contributor-defined functions (child related) */
+bool tid_valid(tid_t);
+struct file* thread_get_file(struct thread * , int);
 
 #endif /* threads/thread.h */

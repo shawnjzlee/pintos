@@ -11,9 +11,14 @@
 #include "threads/switch.h"
 #include "threads/synch.h"
 #include "threads/vaddr.h"
+#include "threads/malloc.h"
 #ifdef USERPROG
 #include "userprog/process.h"
 #endif
+
+/* Contributor-added macros and libraries */
+#include "threads/malloc.h"
+#define MAX_SZ 50
 
 /* Random value for struct thread's `magic' member.
    Used to detect stack overflow.  See the big comment at the top
@@ -84,6 +89,44 @@ static tid_t allocate_tid (void);
 
    It is not safe to call thread_current() until this function
    finishes. */
+   
+/* Initializes the child thread by passing in the child element and the parent
+   thread.
+   
+   tid defines the parent thread's TID, status is an bool array that contains
+   four status flags about the thread, rc is the return status, and parent is
+   the parent thread that was passed into the function */
+void 
+init_child(struct child_elem* child, struct thread* parent)
+{
+	child->tid = parent->tid;        /* Set TID to parent TID */
+	child->status[0] = false;        /* flag: is_waiting */
+	child->status[1] = false;        /* flag: load */
+	child->status[2] = false;        /* flag: load failed */
+	child->status[3] = false;        /* flag: exit */
+	child->rc = 99;                  /* Set arbitrary number for return code */
+	child->parent = parent;          /* Set parent to passed in thread */
+}
+
+/* Gets a child list element by passing in a list and the tid.
+   Returns null if the child list element cannot be found (child->tid != tid) */
+struct child_elem *
+child_get_element(struct list * l, tid_t tid)
+{
+    struct list_elem * e;
+    struct child_elem * child;
+	
+    /* Similar to line 339 in /threads/thread.c. Traverses the children list
+       to find if a thread exists. This section has interrupts off. */
+    for (e = list_begin (l); e != list_end (l); e = list_next (e))
+    {
+        child = list_entry (e, struct child_elem, elem);
+        if (child->tid == tid)
+            return child;
+    }
+    return NULL;
+}
+
 void
 thread_init (void) 
 {
@@ -170,6 +213,7 @@ thread_create (const char *name, int priority,
   struct kernel_thread_frame *kf;
   struct switch_entry_frame *ef;
   struct switch_threads_frame *sf;
+  struct child_elem * child;
   tid_t tid;
   enum intr_level old_level;
 
@@ -203,7 +247,14 @@ thread_create (const char *name, int priority,
   sf = alloc_frame (t, sizeof *sf);
   sf->eip = switch_entry;
   sf->ebp = 0;
-
+  
+  /* Initialize child. */
+  t->parent = thread_current();
+  child = (struct child_elem *)malloc (sizeof (struct child_elem));
+  init_child (child, t);
+  list_push_back (&thread_current ()->child_list, &child->elem);
+  t->childelem = child;
+  
   intr_set_level (old_level);
 
   /* Add to run queue. */
@@ -469,6 +520,17 @@ init_thread (struct thread *t, const char *name, int priority)
   t->stack = (uint8_t *) t + PGSIZE;
   t->priority = priority;
   t->magic = THREAD_MAGIC;
+
+  /* Initialize contributor-defined variables */
+  t->parent = NULL;
+  list_init (&t->child_list);
+  list_init (&t->file_list);
+  t->is_waiting = false;
+  t-> exit = false;
+  t->num_files = 1;
+  t->fd = 2;
+  /* ======================================== */
+  
   list_push_back (&all_list, &t->allelem);
 }
 
@@ -566,6 +628,61 @@ schedule (void)
   if (cur != next)
     prev = switch_threads (cur, next);
   thread_schedule_tail (prev);
+}
+
+/* Checks if the tid is valid in the all list. Traverses through the entire list
+   of threads and returns false if any thread != to the tid passed in */
+bool
+tid_valid(tid_t tid)
+{
+	struct list_elem * e;
+	enum intr_level old_level = intr_disable ();
+	
+	/* Similar to line 339 in /threads/thread.c. Traverses the children list
+	   to find if a thread exists. This section has interrupts on. */
+	for (e = list_begin (&all_list); 
+		 e != list_end (&all_list); 
+		 e = list_next (e))
+		{
+			struct thread * t = list_entry (e, struct thread, allelem);
+			 if (t->tid == tid) 
+			 {
+				 intr_set_level (old_level);
+				 return true;
+			 }
+		}
+	intr_set_level (old_level);
+	return false;
+}
+
+/* Gets the file element from the thread that is passed in. It gets the
+   fd list from the thread and traverses for the fd. Returns null if the
+   file is not found. */
+struct file * 
+thread_get_file(struct thread * t, int fd)
+{
+    struct list l= t->file_list;
+    struct list_elem *e;
+	struct file_elem *f;
+    if(list_empty(&l))
+        return NULL;
+
+    for (e= list_begin (&l); e != list_end (&l); e = list_next (e))
+    {
+		/* Checks for previous and next elements in the list. */
+        if(!(e != NULL && e->prev == NULL && e->next != NULL) &&
+           !(e != NULL && e->prev != NULL && e->next != NULL))
+		   { 
+			   return NULL;
+		   }
+
+        f = list_entry (e, struct file_elem, elem);
+        if (f->fd == fd)
+		{
+            return f->file_ptr;
+		}
+    }
+    return NULL;
 }
 
 /* Returns a tid to use for a new thread. */
