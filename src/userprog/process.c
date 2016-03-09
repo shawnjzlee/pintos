@@ -17,6 +17,12 @@
 #include "threads/palloc.h"
 #include "threads/thread.h"
 #include "threads/vaddr.h"
+#include "threads/synch.h"
+
+/* Contributor-added macros and libraries */
+#include "threads/synch.h"
+#define BUFFERSZ 100
+#define WORDSZ 4
 
 static thread_func start_process NO_RETURN;
 static bool load (const char *cmdline, void (**eip) (void), void **esp);
@@ -37,7 +43,12 @@ process_execute (const char *file_name)
   if (fn_copy == NULL)
     return TID_ERROR;
   strlcpy (fn_copy, file_name, PGSIZE);
-
+  
+  /* Store the file name using strtok_r.  
+    strtok_r (char *s, const char *delimiters, char **save_ptr) */
+  char * save_ptr;
+  file_name = strtok_r (file_name, " ", &save_ptr);
+  
   /* Create a new thread to execute FILE_NAME. */
   tid = thread_create (file_name, PRI_DEFAULT, start_process, fn_copy);
   if (tid == TID_ERROR)
@@ -53,18 +64,32 @@ start_process (void *file_name_)
   char *file_name = file_name_;
   struct intr_frame if_;
   bool success;
-
+  
   /* Initialize interrupt frame and load executable. */
   memset (&if_, 0, sizeof if_);
   if_.gs = if_.fs = if_.es = if_.ds = if_.ss = SEL_UDSEG;
   if_.cs = SEL_UCSEG;
   if_.eflags = FLAG_IF | FLAG_MBS;
   success = load (file_name, &if_.eip, &if_.esp);
-
+  
+  /* Get the parent thread. If the thread is not received,
+     then deny its parent write access and set the load
+	   status to true for the child */
+  struct thread * parent = thread_current();
+  if(!success)
+  {
+    parent->childelem->status[2] = true;
+  }
+  else
+  {
+    file_deny_write (parent->cur_file);
+    parent->childelem->status[1] = true;
+  }
+  
   /* If load failed, quit. */
   palloc_free_page (file_name);
   if (!success) 
-    thread_exit ();
+    thread_exit();
 
   /* Start the user process by simulating a return from an
      interrupt, implemented by intr_exit (in
@@ -81,14 +106,11 @@ start_process (void *file_name_)
    exception), returns -1.  If TID is invalid or if it was not a
    child of the calling process, or if process_wait() has already
    been successfully called for the given TID, returns -1
-   immediately, without waiting.
-
-   This function will be implemented in problem 2-2.  For now, it
-   does nothing. */
+   immediately, without waiting. */
 int
-process_wait (tid_t child_tid UNUSED) 
+process_wait (tid_t child_tid) 
 {
-  return -1;
+  return wait(child_tid);
 }
 
 /* Free the current process's resources. */
@@ -97,6 +119,34 @@ process_exit (void)
 {
   struct thread *cur = thread_current ();
   uint32_t *pd;
+
+  if (cur->cur_file != NULL)
+  {
+    close (cur->cur_file);
+    file_allow_write (cur->cur_file);
+
+	/* Close all the files that the process owns as the process exits.
+	   If num_files > 0, we want to close all of the files */
+  if (cur->num_files > 0)
+  {
+	struct list_elem * e;
+	struct file_elem * f;
+	struct list * l = &cur->file_list;	
+      for (e = list_begin (l); e != list_end (l); e = list_next (e))
+      {
+    		/* Similar to line 672 in ../threads/thread.c. Instead of 
+    		   return, break out of the loop */
+        if (!(e != NULL && e->prev == NULL && e->next != NULL) &&
+            !(e != NULL && e->prev != NULL && e->next != NULL))
+    			  {
+              break;
+    			  }
+        f = list_entry (e,struct file_elem, elem);
+        if (f->fd > 1)
+          close (f->fd);
+      }
+    }
+  }
 
   /* Destroy the current process's page directory and switch back
      to the kernel-only page directory. */
@@ -130,6 +180,54 @@ process_activate (void)
   /* Set thread's kernel stack for use in processing
      interrupts. */
   tss_update ();
+}
+
+/* Counts the number of arguments with the passed in variables
+   cmd. We hardcode the delimiter to be ' ' */
+int 
+argc_helper(char * cmd)
+{
+  int counter = 1;
+  bool new_str = false;
+  char * cmd_p = cmd;
+  while (*cmd_p != '\0')
+  {
+    if (*cmd_p != ' ')
+      new_str = false;
+    else
+    {
+      if (new_str == 0)
+          counter++;
+      new_str = true;
+    }
+    cmd_p++;
+  }
+  return counter; 
+}
+
+/* Gets each argument (as a char *) using the passed in cmd and argv[].
+   The argc is only used to append a 0 at the very end of the argv[] */
+void 
+argv_helper(char * cmd, int argc, char * argv[])
+{
+  char * str = (char*)malloc (strlen (cmd) + 1);
+  memcpy (str, cmd, strlen (cmd) + 1);
+	/* Variable to store token and pointer location */
+  char * token, * index;
+  int i = 0;
+	
+	/* Get each token from the parsing through cmd */
+	/* strtok_r (char *s, const char *delimiters, char **index) */
+  for (token = strtok_r (str, " ", &index); 
+       token != NULL;
+       token = strtok_r (NULL, " ", &index))
+    	{
+    		argv[i]= (char*)malloc(strlen(token) + 1);
+    		memcpy(argv[i], token, strlen(token) + 1);
+    		i++;
+    	}
+  argv[argc] = 0;
+  free(str);
 }
 
 /* We load ELF binaries.  The following definitions are taken
@@ -195,7 +293,8 @@ struct Elf32_Phdr
 #define PF_W 2          /* Writable. */
 #define PF_R 4          /* Readable. */
 
-static bool setup_stack (void **esp);
+static void setup_stack_helper (const char * cmd, uint8_t * kpage, void ** esp);
+static bool setup_stack (void **esp, char * cmd_line);
 static bool validate_segment (const struct Elf32_Phdr *, struct file *);
 static bool load_segment (struct file *file, off_t ofs, uint8_t *upage,
                           uint32_t read_bytes, uint32_t zero_bytes,
@@ -214,15 +313,22 @@ load (const char *file_name, void (**eip) (void), void **esp)
   off_t file_ofs;
   bool success = false;
   int i;
-
+  char * save_ptr;
+  
   /* Allocate and activate page directory. */
   t->pagedir = pagedir_create ();
   if (t->pagedir == NULL) 
     goto done;
   process_activate ();
 
+  /* Load the ELF executatable from file_name into the current thread */
+  char * cmd = (char*)malloc (strlen (file_name) + 1);
+  memcpy (cmd,file_name, strlen (file_name)+1);
+  file_name = strtok_r (file_name, " ", &save_ptr);
+  
   /* Open executable file. */
   file = filesys_open (file_name);
+  
   if (file == NULL) 
     {
       printf ("load: %s: open failed\n", file_name);
@@ -302,17 +408,19 @@ load (const char *file_name, void (**eip) (void), void **esp)
     }
 
   /* Set up stack. */
-  if (!setup_stack (esp))
+  if (!setup_stack (esp, cmd))
     goto done;
 
   /* Start address. */
   *eip = (void (*) (void)) ehdr.e_entry;
-
   success = true;
 
  done:
   /* We arrive here whether the load is successful or not. */
-  file_close (file);
+  thread_current()->cur_file = file;
+  if(!success)
+      file_close (file);
+  free(cmd);
   return success;
 }
 
@@ -425,9 +533,94 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
 }
 
 /* Create a minimal stack by mapping a zeroed page at the top of
-   user virtual memory. */
+   user virtual memory. 
+   
+   size_t ofs = PGSIZE; //##Used in push!
+   char * const null = NULL; //##Used for pushing nulls
+   char *ptr; //##strtok_r usage
+   //##Probably need some other variables here as well...
+  
+   //##Parse and put in command line arguments, push each value
+   //##if any push() returns NULL, return false
+  
+   //##push() a null (more precisely &null).
+   //##if push returned NULL, return false
+  
+  
+   //##Push argv addresses (i.e. for the cmd_line added above) in reverse order
+   //##See the stack example on documentation for what "reversed" means
+   //##Push argc, how can we determine argc?
+   //##Push &null
+   //##Should you check for NULL returns?
+  
+   //##Set the stack pointer. IMPORTANT! Make sure you use the right value here
+   *esp = upage + ofs;
+  
+   //##If you made it this far, everything seems good, return true */
+static void
+setup_stack_helper (const char * cmd, uint8_t * kpage, void **esp)
+{
+	/* int argc is the number of command line arguments.
+   argv (push argv addresses in reverse order.
+   argv_p is the stack pointer. */
+	int argc;
+  char ** argv;
+  unsigned int * argv_p;
+  unsigned int u_temp;
+
+  argc = argc_helper(cmd);
+  argv = (char**)malloc ((argc+1) * sizeof(char*));
+  argv_p = (unsigned int*)malloc ((argc+1) * sizeof(unsigned int));
+  argv_helper (cmd, argc, argv);
+  
+  /* Push argv addresses (i.e. for the cmd_line added above) 
+     in rev order */
+  int i, size, temp;
+  for (i=1; i <= argc ; i++)
+  {
+    size = strlen (argv[argc-i]) + 1;
+    *esp -= size;
+    memcpy (*esp, argv[argc-i], size);
+    argv_p [argc-i] = (unsigned int) *esp;
+  }
+  argv_p[argc] = 0;
+  
+  /* Put in command line arguments, push each value */
+  temp = (unsigned int) *esp % WORDSZ;
+  if (temp != 0)
+  {
+    *esp -= temp;
+    memcpy (*esp, &argv[argc],temp);
+  }
+  
+  /* Push argv onto the stack */
+  for (i = 0; i <= argc; i++)
+  {
+    *esp -= WORDSZ;
+    memcpy (*esp, &argv_p[argc-i], WORDSZ);
+  }
+  u_temp = *esp;
+  *esp -= WORDSZ;
+  memcpy (*esp, &u_temp, WORDSZ);
+  
+  /* Push argc */
+  *esp -=WORDSZ;
+  memcpy (*esp, &argc, WORDSZ);
+  
+  /* Return and free up all the malloc'd variables */
+  *esp -=WORDSZ;
+  memcpy (*esp, &argv[argc], WORDSZ);
+  
+  free (argv_p);
+  for(i = 0; i <= argc; i++)
+  {
+    free (argv[i]);
+  }
+  free (argv);
+}
+   
 static bool
-setup_stack (void **esp) 
+setup_stack (void ** esp, char * cmd) 
 {
   uint8_t *kpage;
   bool success = false;
@@ -437,9 +630,14 @@ setup_stack (void **esp)
     {
       success = install_page (((uint8_t *) PHYS_BASE) - PGSIZE, kpage, true);
       if (success)
+      {
         *esp = PHYS_BASE;
+        setup_stack_helper (cmd, kpage, esp);
+      }
       else
+      {
         palloc_free_page (kpage);
+      }
     }
   return success;
 }
